@@ -128,20 +128,3 @@ def run_sweep(wandb_project: str, wandb_entity: str, data_artifact: str, count: 
 
 if __name__ == "__main__":
     run_sweep()
-
-
-
-# if __name__ == "__main__":
-#     sweep_id = wandb.sweep(SWEEP_CONFIG, project="Stock_Model")
-#     wandb.agent(sweep_id, run_train, count=2)
-
-# def run_sweep(wandb_project: str, wandb_entity: str):
-#     sweep_id = wandb.sweep(SWEEP_CONFIG, project=wandb_project, entity=wandb_entity)
-#     wandb.agent(sweep_id, run_train, count=3)
-
-# if __name__ == "__main__":
-#     run_sweep()
-
-
-
-# python sweep.py --wandb_project Stock_data --wandb_entity uzoagulup --data_artifact uzoagulup/Stock_data/Stock_data:v8
