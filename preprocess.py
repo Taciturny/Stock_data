@@ -1,4 +1,5 @@
 import os
+import csv
 import click
 import pickle
 import pandas as pd
@@ -11,6 +12,13 @@ warnings.filterwarnings("ignore")
 def dump_pickle(obj, filename: str):
     with open(filename, "wb") as f_out:
         pickle.dump(obj, f_out)
+
+
+
+def dump_csv(data, filename, header=True, index=False):
+    data.to_csv(filename, index=index, header=header)
+
+
 
 def load_data() -> pd.DataFrame:
     '''
@@ -107,26 +115,40 @@ def create_features(df, rsi_period=10, macd_short_window=12,
 
     return df
 
-def data_splitting(df, train_ratio=0.7, val_ratio=0.15, seed=None):
-    # Data splitting and sort by timestamp
+@click.command()
+@click.option("--wandb_project", help="Name of Weights & Biases project")
+@click.option("--wandb_entity", help="Name of Weights & Biases entity")
+@click.option("--dest_path", help="Location where the resulting files will be saved")
+
+def run_data_prep(wandb_project: str, wandb_entity: str, dest_path: str):
+    # Initialize a Weights & Biases run
+    wandb.init(project=wandb_project, entity=wandb_entity, job_type="preprocess")
+
+    # Load the data
+    df = load_data() 
+
+    # Create features
+    df = create_features(df)  
+
     df = df.sort_values(by='timestamp')
 
     # Determine the split indices based on proportions
     total_length = len(df)
+    train_ratio = 0.7
+    val_ratio = 0.15
     train_end_index = int(total_length * train_ratio)
     val_end_index = train_end_index + int(total_length * val_ratio)
 
     # Split the data
-    train_data = df.iloc[:val_end_index]  # Include 'daily_return' in training data
+    train_data = df.iloc[:train_end_index]  # Training set
+    val_data = df.iloc[train_end_index:val_end_index]  # Validation set
+    test_data = df.iloc[val_end_index:]  # Test set
 
-    # Check if 'daily_return' is in train_data
-    if 'daily_return' in train_data.columns:
-        print("The 'daily_return' column is in train_data.")
-    else:
-        print("The 'daily_return' column is NOT in train_data.")
+    # Check the number of samples in each set
+    print("Number of samples in training data:", len(train_data))
+    print("Number of samples in validation data:", len(val_data))
+    print("Number of samples in test data:", len(test_data))
 
-    val_data = df.iloc[train_end_index:val_end_index]
-    test_data = df.iloc[val_end_index:]
 
     # Exclude the 'timestamp' column
     X_train = train_data.drop(['daily_return', 'timestamp'], axis=1)
@@ -138,26 +160,16 @@ def data_splitting(df, train_ratio=0.7, val_ratio=0.15, seed=None):
     X_test = test_data.drop(['daily_return', 'timestamp'], axis=1)
     y_test = test_data['daily_return']
 
-    return X_train, y_train, X_val, y_val, X_test, y_test
-
-
-def one_hot(X_train, X_val, X_test):
-    # Categorical transformation
-    # Apply one-hot encoding to 'symbol' column in each dataset
     X_train = pd.concat([X_train, pd.get_dummies(X_train['symbol'], prefix='symbol', drop_first=False)], axis=1)
     X_val = pd.concat([X_val, pd.get_dummies(X_val['symbol'], prefix='symbol', drop_first=False)], axis=1)
     X_test = pd.concat([X_test, pd.get_dummies(X_test['symbol'], prefix='symbol', drop_first=False)], axis=1)
 
-        # Drop the original 'symbol' column
+    # Drop the original 'symbol' column
     X_train.drop('symbol', axis=1, inplace=True)
     X_val.drop('symbol', axis=1, inplace=True)
     X_test.drop('symbol', axis=1, inplace=True)
 
-    return X_train, X_val, X_test
-
-
-def normalization(X_train, X_val, X_test):
-    # Numerical scaling
+    # normalize the data
     scaler = MinMaxScaler()
     num_features = ['open', 'high', 'low', 'close', 'volume', 'rsi', 
                     'macd', 'macd_signal', 'stochastic_k', 'stochastic_d', 'bollinger_upper', 'bollinger_middle', 'bollinger_lower']
@@ -169,41 +181,21 @@ def normalization(X_train, X_val, X_test):
     X_val[num_features] = scaler.transform(X_val[num_features])
     X_test[num_features] = scaler.transform(X_test[num_features])
 
-    return X_train, X_val, X_test
+    # Concatenate X and y for train, val, and test sets
+    train_combined = pd.concat([X_train, y_train], axis=1)
+    val_combined = pd.concat([X_val, y_val], axis=1)
+    test_combined = pd.concat([X_test, y_test], axis=1)
 
-@click.command()
-@click.option("--wandb_project", help="Name of Weights & Biases project")
-@click.option("--wandb_entity", help="Name of Weights & Biases entity")
-@click.option("--dest_path", help="Location where the resulting files will be saved")
-def run_data_prep(wandb_project: str, wandb_entity: str, dest_path: str):
-    # Initialize a Weights & Biases run
-    wandb.init(project=wandb_project, entity=wandb_entity, job_type="preprocess")
-
-    # Load the data
-    df = load_data()  # Call the load_data function to load the data
-
-    # Create features
-    df = create_features(df)  # Call the create_features function to add features
-
-    # Split  the data
-    X_train, y_train, X_val, y_val, X_test, y_test = data_splitting(df)
-
-    # Apply one-hot encoding to 'symbol' column
-    X_train, X_val, X_test = one_hot(X_train, X_val, X_test)
-
-    # normalize the data
-    X_train, X_val, X_test = normalization(X_train, X_val, X_test)
 
     # Create dest_path folder unless it already exists
     os.makedirs(dest_path, exist_ok=True)
 
     # Save scaler and datasets
-    scaler = MinMaxScaler()  # Create a scaler
-    X_train, X_val, X_test = normalization(X_train, X_val, X_test) 
     dump_pickle(scaler, os.path.join(dest_path, "scaler.pkl"))
-    dump_pickle((X_train, y_train), os.path.join(dest_path, "train.pkl"))
-    dump_pickle((X_val, y_val), os.path.join(dest_path, "val.pkl"))
-    dump_pickle((X_test, y_test), os.path.join(dest_path, "test.pkl"))
+    # Save the concatenated data
+    dump_csv(train_combined, os.path.join(dest_path, "train.csv"), header=True, index=False)
+    dump_csv(val_combined, os.path.join(dest_path, "val.csv"), header=True, index=False)
+    dump_csv(test_combined, os.path.join(dest_path, "test.csv"), header=True, index=False)
 
     artifact = wandb.Artifact("Stock_data", type="preprocessed_dataset")
     artifact.add_dir(dest_path)
@@ -211,5 +203,3 @@ def run_data_prep(wandb_project: str, wandb_entity: str, dest_path: str):
 
 if __name__ == "__main__":
     run_data_prep()
-
-
